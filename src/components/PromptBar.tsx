@@ -368,6 +368,13 @@ export function PromptBar({
               disabled={busy || running || awaiting}
               onChange={onSessionModeChange}
             />
+            {modelId && (
+              <ModelSelector
+                current={modelId}
+                availableModels={availableModels}
+                onChange={onModelChange}
+              />
+            )}
             {modelId && onModelChange && (
               <ReasoningLevelSelector
                 modelId={modelId}
@@ -382,13 +389,6 @@ export function PromptBar({
             )}
           </div>
           <div className="prompt-send-group">
-            {modelId && (
-              <ModelSelector
-                current={modelId}
-                availableModels={availableModels}
-                onChange={onModelChange}
-              />
-            )}
             {canStop && onStop && (
               <button
                 className="btn danger-btn prompt-stop"
@@ -488,32 +488,45 @@ function ModelSelector({
   onChange?: (modelId: string, reasoningEffort?: string) => void;
 }) {
   const options = resolveModelOptions(availableModels, current);
+  const currentOption = options.find((m) => m.id === current) ?? options[0];
+  const displayLabel = currentOption?.label ?? current;
+  const tooltip =
+    availableModels.length === 0
+      ? `Current model: ${current} (catalog loading…)`
+      : `Current model: ${current}`;
+
   if (!onChange || options.length <= 1) {
     return (
-      <span className="prompt-model" title={current}>
-        {current}
-      </span>
+      <div className="prompt-chip accent-neutral">
+        <span
+          className="prompt-chip-trigger prompt-chip-static"
+          title={tooltip}
+          aria-label={`Model: ${displayLabel}`}
+        >
+          <span className="prompt-chip-glyph" aria-hidden>
+            ✦
+          </span>
+          <span className="prompt-chip-value">{displayLabel}</span>
+        </span>
+      </div>
     );
   }
 
-  const catalogPending = availableModels.length === 0;
   return (
-    <select
-      className="prompt-model-select"
+    <PromptChipSelect
+      label="Model"
       value={current}
-      title={
-        catalogPending
-          ? `Current model: ${current} (catalog loading…)`
-          : `Current model: ${current}`
-      }
-      onChange={(e) => onChange(e.target.value)}
-    >
-      {options.map((m) => (
-        <option key={m.id} value={m.id}>
-          {m.label}
-        </option>
-      ))}
-    </select>
+      displayLabel={displayLabel}
+      tooltip={tooltip}
+      accent="neutral"
+      glyph="✦"
+      options={options.map((m) => ({
+        value: m.id,
+        label: m.label,
+        hint: m.id,
+      }))}
+      onChange={onChange}
+    />
   );
 }
 

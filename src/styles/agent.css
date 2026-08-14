@@ -894,7 +894,7 @@ button.user-question-option:hover:not(:disabled),
   background: color-mix(in srgb, var(--bg-elevated) 82%, var(--hl-low));
 }
 
-/* Mode + Permissions chip pair */
+/* Mode / Model / Level chip row */
 .prompt-controls {
   display: flex;
   align-items: stretch;
@@ -1036,7 +1036,11 @@ button.user-question-option:hover:not(:disabled),
     background 0.12s ease;
 }
 
-.prompt-chip-trigger:hover:not(:disabled) {
+.prompt-chip-static {
+  cursor: default;
+}
+
+.prompt-chip-trigger:hover:not(:disabled):not(.prompt-chip-static) {
   border-color: var(--chip-accent);
   box-shadow:
     var(--inset-spec),
@@ -1141,19 +1145,6 @@ button.user-question-option:hover:not(:disabled),
   gap: 8px;
   flex-shrink: 0;
   min-width: 0;
-}
-
-.prompt-model {
-  max-width: 12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-muted);
-  user-select: none;
 }
 
 .prompt-stop {
