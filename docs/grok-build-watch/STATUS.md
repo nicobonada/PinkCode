@@ -5,8 +5,8 @@ Daily board. How-to: [README.md](./README.md).
 | | |
 |--|--|
 | **Upstream** | `../grok-build` ([xai-org/grok-build](https://github.com/xai-org/grok-build)) |
-| **last_logged** | `393430ee4934bc791b0d538f304a21691c517433` (`393430e`, 2026-08-06) |
-| **open** | `0` |
+| **last_logged** | `eb267feff13129e568df38fb6fdf0ceb65f735d6` (`eb267fe`, 2026-08-13) |
+| **open** | `1` |
 
 Caught up when `open = 0` and local `git rev-parse HEAD` equals `last_logged`.
 
@@ -14,7 +14,7 @@ Caught up when `open = 0` and local `git rev-parse HEAD` equals `last_logged`.
 
 | sync | noted | why PinkCode cares | entry |
 |------|-------|--------------------|-------|
-| — | — | caught up | — |
+| `eb267fe` | 2026-08-14 | grok-4.6 default + catalog refresh (done); image caps, presence, hooks, web_search domains still open | [2026-08-14-eb267fe](./entries/2026-08-14-eb267fe.md) |
 
 ## Recent (keep ~8)
 

@@ -222,19 +222,13 @@ impl AgentManager {
             let mut agents = self.inner.agents.lock();
             agents.get_mut(handle_id).map(|agent| {
                 agent.info.model_id = Some(model_id.to_string());
-                let effort = reasoning_effort
+                agent.info.reasoning_effort = reasoning_effort
                     .map(str::trim)
-                    .filter(|effort| !effort.is_empty());
-                if let Some(effort) = effort {
-                    if let Some(model) = agent
-                        .info
-                        .available_models
-                        .iter_mut()
-                        .find(|model| model.model_id == model_id)
-                    {
-                        model.reasoning_effort = Some(effort.to_string());
-                    }
-                }
+                    .filter(|effort| !effort.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        models::advertised_effort_for(&agent.info.available_models, Some(model_id))
+                    });
                 agent.info.clone()
             })
         };
@@ -718,7 +712,7 @@ impl AgentManager {
             let Some(agent) = agents.get_mut(handle_id) else {
                 return;
             };
-            models::apply_models_info(&mut agent.info, &models);
+            models::apply_catalog_refresh(&mut agent.info, &models);
             agent.info.clone()
         };
         Self::emit_status(inner, &updated);
@@ -1231,6 +1225,7 @@ impl AgentManager {
             permission_mode,
             always_approve,
             model_id: req.model.clone(),
+            reasoning_effort: None,
             available_models: Vec::new(),
             last_error: None,
             title: req
@@ -1360,6 +1355,7 @@ impl AgentManager {
             permission_mode,
             always_approve,
             model_id: None,
+            reasoning_effort: None,
             available_models: Vec::new(),
             last_error: None,
             title: Some(format!(

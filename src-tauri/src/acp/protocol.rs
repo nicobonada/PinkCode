@@ -170,7 +170,7 @@ pub struct SessionLoadParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpModelInfo {
-    /// Wire field is `modelId` (string id, e.g. `grok-4.5`).
+    /// Wire field is `modelId` (string id, e.g. `grok-4.6`).
     #[serde(default, alias = "id")]
     pub model_id: String,
     #[serde(default)]

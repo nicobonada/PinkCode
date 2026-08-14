@@ -35,7 +35,7 @@ interface Props {
   timelineItems?: TimelineItem[];
   /** Reset history browse / local sent when the active session changes. */
   sessionId?: string | null;
-  /** Current model id (e.g. grok-4.5), shown left of Send. */
+  /** Current model id (e.g. grok-4.6), shown left of Send. */
   modelId?: string | null;
   /**
    * Agent-advertised catalog (`availableModels`). Empty while non-blocking
@@ -372,6 +372,7 @@ export function PromptBar({
               <ReasoningLevelSelector
                 modelId={modelId}
                 availableModels={availableModels}
+                reasoningEffort={managed?.reasoningEffort}
                 busy={busy}
                 running={Boolean(running || awaiting)}
                 onChange={(reasoningEffort) =>
@@ -450,6 +451,7 @@ function parseSlashQuery(
 
 /** Offline / empty-catalog fallback when agent has not yet pushed models. */
 const FALLBACK_MODELS: { id: string; label: string }[] = [
+  { id: "grok-4.6", label: "Grok 4.6" },
   { id: "grok-4.5", label: "Grok 4.5" },
   { id: "grok-4", label: "Grok 4" },
   { id: "grok-4-mini", label: "Grok 4 Mini" },
@@ -518,12 +520,14 @@ function ModelSelector({
 function ReasoningLevelSelector({
   modelId,
   availableModels,
+  reasoningEffort,
   busy,
   running,
   onChange,
 }: {
   modelId: string;
   availableModels: AvailableModelInfo[];
+  reasoningEffort?: string | null;
   busy: boolean;
   running: boolean;
   onChange: (reasoningEffort: string) => void;
@@ -532,8 +536,8 @@ function ReasoningLevelSelector({
   const options = model?.reasoningEfforts ?? [];
   if (!model?.supportsReasoningEffort || options.length === 0) return null;
 
-  const selected = model?.reasoningEffort ??
-    options.find((option) => option.default)?.value ??
+  const selected = reasoningEffort?.trim() ||
+    options.find((option) => option.default)?.value ||
     options[0]!.value;
   const active = options.find((option) => option.value === selected) ?? options[0]!;
   return (

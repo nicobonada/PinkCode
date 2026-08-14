@@ -71,7 +71,8 @@ pub struct AvailableModelInfo {
     /// Whether the model accepts a reasoning level, as advertised by Grok ACP.
     #[serde(default)]
     pub supports_reasoning_effort: bool,
-    /// Current reasoning level for this model, as advertised by Grok ACP.
+    /// Catalog-default reasoning level advertised by Grok ACP. Session choice
+    /// lives on [`ManagedAgentInfo::reasoning_effort`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
     /// Model-specific reasoning levels advertised by Grok ACP.
@@ -102,6 +103,9 @@ pub struct ManagedAgentInfo {
     pub permission_mode: PermissionMode,
     pub always_approve: bool,
     pub model_id: Option<String>,
+    /// Session reasoning level. Catalog refresh must not overwrite this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     /// Live catalog from the agent. Empty until bootstrap/models/update fills it.
     #[serde(default)]
     pub available_models: Vec<AvailableModelInfo>,

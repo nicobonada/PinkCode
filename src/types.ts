@@ -322,7 +322,7 @@ export interface AvailableModelInfo {
   name?: string | null;
   /** Whether this model accepts a reasoning level, as advertised by Grok ACP. */
   supportsReasoningEffort?: boolean;
-  /** Current model-specific reasoning level advertised by Grok ACP. */
+  /** Catalog-default reasoning level advertised by Grok ACP. */
   reasoningEffort?: string | null;
   /** Model-specific supported reasoning levels advertised by Grok ACP. */
   reasoningEfforts?: ReasoningEffortOption[];
@@ -338,6 +338,8 @@ export interface ManagedAgentInfo {
   /** Mirror of permissionMode === "bypassPermissions". */
   alwaysApprove: boolean;
   modelId?: string | null;
+  /** Session reasoning level. Catalog refresh must not overwrite this. */
+  reasoningEffort?: string | null;
   /**
    * Live catalog from the agent. Empty until bootstrap / models/update.
    * UI falls back to a built-in list when still empty.

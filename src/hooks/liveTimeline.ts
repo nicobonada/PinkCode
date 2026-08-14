@@ -147,6 +147,7 @@ export function sameManagedAgent(
     left.alwaysApprove === right.alwaysApprove &&
     left.permissionMode === right.permissionMode &&
     left.modelId === right.modelId &&
+    left.reasoningEffort === right.reasoningEffort &&
     sameAvailableModels(left.availableModels, right.availableModels) &&
     left.title === right.title &&
     left.lastError === right.lastError
