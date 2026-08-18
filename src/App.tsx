@@ -13,7 +13,6 @@ import {
   resolvePermission,
   setPermissionMode,
   setSessionMode,
-  setSessionModel,
   setTaskPermissionMode,
   setTaskPlanArmed,
   spawnAgent,
@@ -30,6 +29,7 @@ import { WorkspacePanel } from "./components/WorkspacePanel";
 import { useAgentEvents } from "./hooks/useAgentEvents";
 import { useAppUpdate } from "./hooks/useAppUpdate";
 import { usePromptQueueController } from "./hooks/usePromptQueueController";
+import { useSessionModel } from "./hooks/useSessionModel";
 import { useSessionPlanMode } from "./hooks/useSessionPlanMode";
 import { useSessionIndex } from "./hooks/useSessionIndex";
 import { useSlashCommandCatalog } from "./hooks/useSlashCommandCatalog";
@@ -58,6 +58,7 @@ import {
   sessionModeFromPermission,
   sessionModeWireId,
 } from "./utils/sessionMode";
+import { displayedSessionModel } from "./utils/sessionModel";
 import "./App.css";
 
 /**
@@ -109,6 +110,7 @@ function App() {
   /** Seed for New Task modal Mode selector; last session mode used when spawning. */
   const [lastSpawnSessionMode, setLastSpawnSessionMode] =
     useState<SessionMode>("normal");
+
   /** Bump git changes panel after disk events. */
   const [gitRefreshKey, setGitRefreshKey] = useState(0);
   /**
@@ -120,6 +122,7 @@ function App() {
   const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false);
 
   const planMode = useSessionPlanMode();
+  const sessionModel = useSessionModel();
   const {
     managedList,
     managedForSession,
@@ -540,6 +543,8 @@ function App() {
     return info;
   }
 
+
+
   async function handleResolvePermission(
     item: PendingPermission,
     optionId: string,
@@ -725,6 +730,14 @@ function App() {
         sessionIdForPlan = info.sessionId ?? sessionId;
       }
 
+      if (liveAgent) {
+        try {
+          liveAgent = await applySessionModel(liveAgent);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      }
+
       const { modeError } = await planMode.ensurePlanModeForTurn(
         handleId,
         sessionIdForPlan,
@@ -756,29 +769,40 @@ function App() {
     }
   }
 
+  async function applySessionModel(
+    info: ManagedAgentInfo,
+  ): Promise<ManagedAgentInfo> {
+    const applied = await sessionModel.reapply(info);
+    if (applied !== info) upsertManaged(applied);
+    return applied;
+  }
+
   async function handleModelChange(
     modelId: string,
     reasoningEffort?: string,
   ) {
-    const managed = managedForSession;
-    if (
-      !managed ||
-      managed.status === "stopped" ||
-      managed.status === "error" ||
-      controlBusy
-    ) {
-      return;
-    }
+    const sessionId = managedForSession?.sessionId ?? selectedId;
+    if (!sessionId) return;
+    const previous = sessionModel.choiceOf(sessionId);
+    sessionModel.select(sessionId, modelId, reasoningEffort);
+    const live =
+      managedForSession && isLiveManagedStatus(managedForSession.status)
+        ? managedForSession
+        : null;
+    if (!live || controlBusy) return;
     setControlBusy(true);
     setError(null);
     try {
-      await setSessionModel(managed.handleId, modelId, reasoningEffort);
+      await applySessionModel(live);
     } catch (e) {
+      sessionModel.revert(sessionId, previous);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setControlBusy(false);
     }
   }
+
+
 
   function requestStop(sessionId: string) {
     const managed = managedList.find(
@@ -900,6 +924,12 @@ function App() {
     }
     return out;
   }, [managedList]);
+  const shownModel = displayedSessionModel(
+    sessionModel.choiceOf(selectedId),
+    managedForSession,
+    detail?.card.modelId ??
+      sessions.find((session) => session.id === selectedId)?.modelId,
+  );
 
   return (
     <div className="app-shell">
@@ -1012,13 +1042,9 @@ function App() {
                 }
               : undefined
           }
-          onModelChange={
-            managedForSession &&
-            managedForSession.status !== "stopped" &&
-            managedForSession.status !== "error"
-              ? handleModelChange
-              : undefined
-          }
+          onModelChange={handleModelChange}
+          modelId={shownModel.modelId}
+          reasoningEffort={shownModel.reasoningEffort}
         />
 
         <aside

@@ -1,4 +1,5 @@
 import type {
+  AvailableModelInfo,
   TimelineItem,
   ManagedAgentInfo,
   ShellEntry,
@@ -120,6 +121,19 @@ export function trimLiveList(
   }
 }
 
+function sameEffortOptions(
+  left: AvailableModelInfo["reasoningEfforts"],
+  right: AvailableModelInfo["reasoningEfforts"],
+): boolean {
+  const a = left ?? [];
+  const b = right ?? [];
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].value !== b[i].value || a[i].label !== b[i].label) return false;
+  }
+  return true;
+}
+
 function sameAvailableModels(
   left: ManagedAgentInfo["availableModels"],
   right: ManagedAgentInfo["availableModels"],
@@ -128,7 +142,17 @@ function sameAvailableModels(
   const b = right ?? [];
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i].modelId !== b[i].modelId || (a[i].name ?? null) !== (b[i].name ?? null)) {
+    const leftModel = a[i];
+    const rightModel = b[i];
+    if (
+      leftModel.modelId !== rightModel.modelId ||
+      (leftModel.name ?? null) !== (rightModel.name ?? null) ||
+      Boolean(leftModel.supportsReasoningEffort) !==
+        Boolean(rightModel.supportsReasoningEffort) ||
+      (leftModel.reasoningEffort ?? null) !==
+        (rightModel.reasoningEffort ?? null) ||
+      !sameEffortOptions(leftModel.reasoningEfforts, rightModel.reasoningEfforts)
+    ) {
       return false;
     }
   }

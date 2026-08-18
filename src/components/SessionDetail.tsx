@@ -66,6 +66,10 @@ interface Props {
   onKillTask?: (taskId: string) => void;
   /** Switch session model or reasoning level via ACP set_session_model. */
   onModelChange?: (modelId: string, reasoningEffort?: string) => void;
+  /** Resolved model id for the chip (user pick, else agent, else card). */
+  modelId?: string | null;
+  /** Resolved thinking level for the chip. */
+  reasoningEffort?: string | null;
 }
 
 export function SessionDetailView({
@@ -94,6 +98,8 @@ export function SessionDetailView({
   onCancelSubagent,
   onKillTask,
   onModelChange,
+  modelId = null,
+  reasoningEffort = null,
 }: Props) {
   const tabBodyRef = useRef<HTMLDivElement>(null);
 
@@ -262,12 +268,14 @@ export function SessionDetailView({
         availableCommands={availableCommands}
         timelineItems={timelineItems}
         sessionId={card?.id ?? null}
-        modelId={managed?.modelId ?? card.modelId ?? null}
+        modelId={modelId}
         availableModels={managed?.availableModels ?? []}
+        reasoningEffort={reasoningEffort}
         onModelChange={onModelChange}
         canStop={Boolean(canStop)}
         onStop={onStopAgent}
       />
+
     </section>
   );
 }

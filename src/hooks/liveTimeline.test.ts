@@ -15,12 +15,13 @@ import {
   reduceShellUpdate,
   settleLifecycleItems,
   settleStreamingItems,
+  sameManagedAgent,
   shouldDropUpdate,
   stabilizeTimelineList,
   type UpdateDescription,
 } from "./liveTimeline";
 import { describeUpdate } from "../utils/format";
-import type { TimelineItem } from "../types";
+import type { ManagedAgentInfo, TimelineItem } from "../types";
 describe("live timeline reducer", () => {
   it("settles running lifecycle cards when a managed handle closes", () => {
     const map = new Map<string, TimelineItem[]>([
@@ -929,3 +930,35 @@ describe("control-plane extension notification gate", () => {
     expect(shouldDropUpdate(desc)).toBe(false);
   });
 });
+
+describe("sameManagedAgent catalog", () => {
+  const base: ManagedAgentInfo = {
+    handleId: "h",
+    cwd: "/tmp",
+    status: "ready",
+    permissionMode: "default",
+    alwaysApprove: false,
+    createdAt: "t",
+    modelId: "grok-4.6",
+    availableModels: [{ modelId: "grok-4.6", name: "Grok 4.6" }],
+  };
+
+  it("treats a later reasoning-effort menu as a real catalog change", () => {
+    const withMenu: ManagedAgentInfo = {
+      ...base,
+      availableModels: [
+        {
+          modelId: "grok-4.6",
+          name: "Grok 4.6",
+          supportsReasoningEffort: true,
+          reasoningEfforts: [
+            { value: "xhigh", label: "Extra High Effort" },
+            { value: "high", label: "High Effort" },
+          ],
+        },
+      ],
+    };
+    expect(sameManagedAgent(base, withMenu)).toBe(false);
+  });
+});
+

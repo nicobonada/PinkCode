@@ -894,7 +894,7 @@ button.user-question-option:hover:not(:disabled),
   background: color-mix(in srgb, var(--bg-elevated) 82%, var(--hl-low));
 }
 
-/* Mode / Model / Level chip row */
+/* Mode / Model / Thinking chip row */
 .prompt-controls {
   display: flex;
   align-items: stretch;
