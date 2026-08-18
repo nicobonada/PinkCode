@@ -1011,17 +1011,17 @@ footer p {
   border-bottom-color: rgba(144, 122, 169, 0.45);
 }
 
-footer > div:last-child {
+footer > .footer-links {
   display: flex;
   justify-self: end;
   gap: 22px;
   font-weight: 500;
 }
 
-.friends {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+footer .friends {
+  grid-column: 1 / -1;
+  margin: 10px 0 0;
+  order: 4;
 }
 
 /* ── Responsive ───────────────────────────────────────────────── */
@@ -1182,7 +1182,7 @@ footer > div:last-child {
     text-align: left;
   }
 
-  footer > div:last-child {
+  footer > .footer-links {
     justify-self: auto;
   }
 }
