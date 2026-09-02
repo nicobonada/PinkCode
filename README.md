@@ -111,6 +111,19 @@ winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passi
 powershell -ExecutionPolicy Bypass -File scripts/windows-setup.ps1
 ```
 
+### Nix
+
+`nix develop` (or direnv via `.envrc`) provides Node 24, stable Rust, and the
+Linux Tauri libraries. On NixOS use `cargo tauri`, not `npm run tauri:*` — the
+npm CLI ships an FHS binary.
+
+```bash
+npm ci
+cargo tauri dev
+cargo tauri build
+npm run check
+```
+
 ### Build and run
 
 ```bash

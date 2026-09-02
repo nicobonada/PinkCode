@@ -55,3 +55,8 @@ coverage/
 
 # Turborepo
 .turbo/
+
+# Nix
+/result
+/result-*
+.direnv/
