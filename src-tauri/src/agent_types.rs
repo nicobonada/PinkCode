@@ -23,8 +23,11 @@ pub enum PermissionMode {
     /// Spawn/attach pass top-level `grok --permission-mode auto agent --no-leader stdio`
     /// (`--permission-mode` is not under `agent` — clap rejects that and the
     /// process dies immediately).
-    /// Live Mode toggles notify Grok via `x.ai/yolo_mode_changed`; the host
-    /// never overrides a permission request that Grok's classifier escalated.
+    /// Live Mode chip is the host gate. Grok's own manager is set at
+    /// `session/new`|`session/load` via `_meta.yoloMode` / `_meta.autoMode`
+    /// (stdio Grok 1.0.5 rejects `x.ai/yolo_mode_changed` with method-not-found).
+    /// The host never overrides a permission request that Grok's classifier
+    /// escalated.
     Auto,
     BypassPermissions,
     DontAsk,

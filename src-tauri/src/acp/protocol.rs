@@ -151,11 +151,44 @@ pub struct AuthenticateParams {
 
 // ── session/new & session/load ──────────────────────────────────────────────
 
+/// Grok `session/new` and `session/load` `_meta` permission flags.
+///
+/// Grok 1.0.5's stdio agent does not implement `x.ai/yolo_mode_changed`
+/// (JSON-RPC -32601). Mode is applied here: `yoloMode` / `autoMode` on
+/// session bootstrap. Omit the object for ask/default so Grok keeps its
+/// spawn-time mode.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPermissionMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yolo_mode: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_mode: Option<bool>,
+}
+
+impl SessionPermissionMeta {
+    pub fn yolo() -> Self {
+        Self {
+            yolo_mode: Some(true),
+            auto_mode: None,
+        }
+    }
+
+    pub fn auto() -> Self {
+        Self {
+            yolo_mode: None,
+            auto_mode: Some(true),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionNewParams {
     pub cwd: String,
     pub mcp_servers: Vec<Value>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<SessionPermissionMeta>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,6 +197,8 @@ pub struct SessionLoadParams {
     pub session_id: String,
     pub cwd: String,
     pub mcp_servers: Vec<Value>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<SessionPermissionMeta>,
 }
 
 /// One entry in ACP `SessionModelState.availableModels`.
@@ -763,15 +798,6 @@ mod lifecycle_contract_tests {
         assert_eq!(value["tasks"][0]["display_command"], "npm test");
         assert_eq!(value["tasks"][0]["completed"], false);
     }
-}
-
-// ── x.ai/yolo_mode_changed ──────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-pub struct YoloModeChangedParams {
-    pub yolo_mode: bool,
-    pub auto_mode: bool,
-    pub permission_mode: &'static str,
 }
 
 // ── JSON-RPC envelopes (internal wire helpers) ──────────────────────────────

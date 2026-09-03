@@ -1,4 +1,7 @@
-use super::{is_active_generation, pending_count, AgentManager, Inner, LiveAgent, RequestTarget};
+use super::{
+    is_active_generation, pending_count, session_permission_meta, AgentManager, Inner, LiveAgent,
+    RequestTarget,
+};
 use crate::acp::{AcpClient, NotifyFn};
 use crate::agent_runtime::find_grok_bin;
 use crate::agent_types::{ManagedStatus, PermissionMode};
@@ -368,7 +371,11 @@ fn run(inner: Arc<Inner>, handle_id: String, failed_generation: u64) {
                 "ACP reconnect authentication failed; trying session/load"
             );
         }
-        let loaded = match candidate.session_load(&snapshot.session_id, &snapshot.cwd) {
+        let loaded = match candidate.session_load(
+            &snapshot.session_id,
+            &snapshot.cwd,
+            session_permission_meta(snapshot.permission_mode),
+        ) {
             Ok(value) => value,
             Err(error) => {
                 last_error = error.user_message();
@@ -392,7 +399,6 @@ fn run(inner: Arc<Inner>, handle_id: String, failed_generation: u64) {
             return;
         };
 
-        AgentManager::notify_mode_changed(&candidate, snapshot.permission_mode);
         AgentManager::drain_early_requests(&inner, &handle_id);
         let _ = old_client.kill();
         if !is_active_generation(&inner, &handle_id, next_generation) {

@@ -1,4 +1,4 @@
-use crate::acp::protocol::SessionModelsInfo;
+use crate::acp::protocol::{SessionModelsInfo, SessionPermissionMeta};
 use crate::acp::{AcpClient, NotifyFn};
 use crate::agent_fs::write_text_file;
 use crate::agent_runtime::{find_grok_bin, now_iso, truncate_text};
@@ -46,6 +46,15 @@ struct RequestTarget {
     client: Arc<AcpClient>,
     permission_mode: PermissionMode,
     session_hint: Option<String>,
+}
+
+/// Grok session `_meta` for the host permission mode. Ask/default omits it.
+pub(crate) fn session_permission_meta(mode: PermissionMode) -> Option<SessionPermissionMeta> {
+    match mode {
+        PermissionMode::BypassPermissions => Some(SessionPermissionMeta::yolo()),
+        PermissionMode::Auto => Some(SessionPermissionMeta::auto()),
+        _ => None,
+    }
 }
 
 #[derive(Clone)]
@@ -409,19 +418,16 @@ impl AgentManager {
         handle_id: &str,
         mode: PermissionMode,
     ) -> Result<ManagedAgentInfo, String> {
-        let (session_id, client, changed, previous_mode) = {
+        let (session_id, previous_mode) = {
             let mut agents = self.inner.agents.lock();
             let agent = agents
                 .get_mut(handle_id)
                 .ok_or_else(|| format!("unknown handle {handle_id}"))?;
             let previous_mode = agent.info.permission_mode;
-            let changed = previous_mode != mode;
             agent.info.permission_mode = mode;
             agent.info.always_approve = mode.spawns_always_approve();
             Self::emit_status(&self.inner, &agent.info);
-            let session_id = agent.info.session_id.clone();
-            let client = Arc::clone(&agent.client);
-            (session_id, client, changed, previous_mode)
+            (agent.info.session_id.clone(), previous_mode)
         };
         if let Some(sid) = session_id.as_deref() {
             if let Err(error) = task_prefs::set_permission_mode(sid, mode) {
@@ -433,29 +439,9 @@ impl AgentManager {
                 return Err(error);
             }
         }
-        if changed {
-            Self::notify_mode_changed(&client, mode);
-        }
         self.reconcile_pending_for_mode(handle_id, mode);
         self.get(handle_id)
             .ok_or_else(|| format!("unknown handle {handle_id}"))
-    }
-
-    /// Send x.ai/yolo_mode_changed notification to shell so its permission
-    /// manager stays in sync with the host-side mode.
-    fn notify_mode_changed(client: &AcpClient, mode: PermissionMode) {
-        let permission_mode = match mode {
-            PermissionMode::BypassPermissions => "always-approve",
-            PermissionMode::Auto => "auto",
-            _ => "ask",
-        };
-        if let Err(e) = client.notify_yolo_mode(
-            mode == PermissionMode::BypassPermissions,
-            mode == PermissionMode::Auto,
-            permission_mode,
-        ) {
-            tracing::warn!(error = %e, "failed to send yolo_mode_changed notification");
-        }
     }
 
     fn reconcile_pending_for_mode(&self, handle_id: &str, mode: PermissionMode) {
@@ -1285,7 +1271,7 @@ impl AgentManager {
         };
         let (mut info, client) = self.start_client(info, &global_args, &agent_args)?;
 
-        let result = match client.session_new(&cwd) {
+        let result = match client.session_new(&cwd, session_permission_meta(permission_mode)) {
             Ok(r) => r,
             Err(e) => {
                 return Err(Self::fail_registered_agent(
@@ -1427,7 +1413,11 @@ impl AgentManager {
             pending_permission_count: 0,
         };
         let (mut info, client) = self.start_client(info, &global_args, &agent_args)?;
-        let result = match client.session_load(&session_id, &cwd) {
+        let result = match client.session_load(
+            &session_id,
+            &cwd,
+            session_permission_meta(permission_mode),
+        ) {
             Ok(r) => r,
             Err(e) => {
                 return Err(Self::fail_registered_agent(
@@ -1724,7 +1714,8 @@ impl AgentManager {
 mod tests {
     use super::{
         can_reconnect_after_burst, finish_prompt, finish_prompt_status, next_reconnect_burst,
-        terminal_prompt_id, ManagedStatus,
+        session_permission_meta, terminal_prompt_id, ManagedStatus, PermissionMode,
+        SessionPermissionMeta,
     };
     use serde_json::json;
     use std::collections::HashSet;
@@ -1753,6 +1744,20 @@ mod tests {
         assert!(can_reconnect_after_burst(true, 2));
         assert!(!can_reconnect_after_burst(true, 3));
         assert!(!can_reconnect_after_burst(false, 0));
+    }
+
+    #[test]
+    fn session_permission_meta_maps_yolo_and_auto_only() {
+        assert_eq!(session_permission_meta(PermissionMode::Default), None);
+        assert_eq!(session_permission_meta(PermissionMode::AcceptEdits), None);
+        assert_eq!(
+            session_permission_meta(PermissionMode::BypassPermissions),
+            Some(SessionPermissionMeta::yolo())
+        );
+        assert_eq!(
+            session_permission_meta(PermissionMode::Auto),
+            Some(SessionPermissionMeta::auto())
+        );
     }
 
     #[test]

@@ -218,18 +218,28 @@ impl AcpClient {
         .map(Some)
     }
 
-    pub fn session_new(&self, cwd: &str) -> Result<SessionBootstrapResult> {
+    pub fn session_new(
+        &self,
+        cwd: &str,
+        permission_meta: Option<SessionPermissionMeta>,
+    ) -> Result<SessionBootstrapResult> {
         self.call(
             "session/new",
             &SessionNewParams {
                 cwd: cwd.to_string(),
                 mcp_servers: vec![],
+                meta: permission_meta,
             },
             Duration::from_secs(60),
         )
     }
 
-    pub fn session_load(&self, session_id: &str, cwd: &str) -> Result<SessionBootstrapResult> {
+    pub fn session_load(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        permission_meta: Option<SessionPermissionMeta>,
+    ) -> Result<SessionBootstrapResult> {
         // Grok `LoadSessionResponse` often omits `sessionId` (client already
         // knows it). Normalize via the shared helper so the field is stable.
         // 120s covers large-session load under streaming replay (see
@@ -240,6 +250,7 @@ impl AcpClient {
                 session_id: session_id.to_string(),
                 cwd: cwd.to_string(),
                 mcp_servers: vec![],
+                meta: permission_meta,
             },
             Duration::from_secs(120),
         )?;
@@ -453,23 +464,6 @@ impl AcpClient {
                 session_id: session_id.to_string(),
             },
             Duration::from_secs(15),
-        )
-    }
-
-    /// Host permission mode → Grok shell yolo/auto notification.
-    pub fn notify_yolo_mode(
-        &self,
-        yolo_mode: bool,
-        auto_mode: bool,
-        permission_mode: &'static str,
-    ) -> Result<()> {
-        self.notify_typed(
-            "x.ai/yolo_mode_changed",
-            &YoloModeChangedParams {
-                yolo_mode,
-                auto_mode,
-                permission_mode,
-            },
         )
     }
 
@@ -737,6 +731,36 @@ mod tests {
     }
 
     #[test]
+    fn session_new_params_emit_yolo_meta_and_omit_ask() {
+        let yolo = serde_json::to_value(&SessionNewParams {
+            cwd: "/tmp".into(),
+            mcp_servers: vec![],
+            meta: Some(SessionPermissionMeta::yolo()),
+        })
+        .unwrap();
+        assert_eq!(yolo["_meta"]["yoloMode"], true);
+        assert!(yolo["_meta"].get("autoMode").is_none());
+
+        let auto = serde_json::to_value(&SessionNewParams {
+            cwd: "/tmp".into(),
+            mcp_servers: vec![],
+            meta: Some(SessionPermissionMeta::auto()),
+        })
+        .unwrap();
+        assert_eq!(auto["_meta"]["autoMode"], true);
+        assert!(auto["_meta"].get("yoloMode").is_none());
+
+        let ask = serde_json::to_value(&SessionNewParams {
+            cwd: "/tmp".into(),
+            mcp_servers: vec![],
+            meta: None,
+        })
+        .unwrap();
+        assert!(ask.get("_meta").is_none());
+        assert_eq!(ask["mcpServers"], json!([]));
+    }
+
+    #[test]
     fn session_usage_wire_nests_under_usage() {
         let wire: SessionUsageWire = serde_json::from_value(json!({
             "usage": {
@@ -941,7 +965,7 @@ mod tests {
         .expect("spawn");
         client.initialize().expect("init");
         let res = client
-            .session_new(&cwd.display().to_string())
+            .session_new(&cwd.display().to_string(), None)
             .expect("session/new");
         assert!(res
             .session_id
