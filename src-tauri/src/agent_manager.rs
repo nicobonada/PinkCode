@@ -11,6 +11,7 @@ use crate::permission_policy::{
     GateDecision,
 };
 use crate::rpc_handler::{self, HandleResult, ResponseAction};
+use crate::sessions;
 use crate::shell_emitter;
 use crate::shell_stream::ShellStream;
 use crate::task_prefs;
@@ -37,6 +38,8 @@ struct LiveAgent {
     agent_args: Vec<String>,
     in_flight_prompts: HashSet<String>,
     current_prompt_id: Option<String>,
+    last_activate: Option<Instant>,
+    reconnect_burst: u32,
 }
 
 struct RequestTarget {
@@ -52,6 +55,29 @@ struct PendingGate {
 }
 
 const INITIAL_CONNECTION_GENERATION: u64 = 1;
+const RECONNECT_UNSTABLE: Duration = Duration::from_secs(5);
+const RECONNECT_BURST_LIMIT: u32 = 3;
+
+/// Count deaths inside the last-activate window. A stale or missing activate
+/// resets the burst so a later transport loss can reconnect again.
+pub(crate) fn next_reconnect_burst(
+    last_activate: Option<Instant>,
+    now: Instant,
+    burst: u32,
+) -> u32 {
+    let unstable = last_activate
+        .map(|t| now.saturating_duration_since(t) < RECONNECT_UNSTABLE)
+        .unwrap_or(false);
+    if unstable {
+        burst.saturating_add(1)
+    } else {
+        0
+    }
+}
+
+pub(crate) fn can_reconnect_after_burst(has_session: bool, burst: u32) -> bool {
+    has_session && burst < RECONNECT_BURST_LIMIT
+}
 
 fn finish_prompt(
     in_flight: &mut HashSet<String>,
@@ -904,7 +930,7 @@ impl AgentManager {
             }
         }
 
-        let (updated, should_reconnect) = {
+        let (updated, should_reconnect, kill_client) = {
             let mut agents = inner.agents.lock();
             match agents.get_mut(handle_id) {
                 Some(agent) => {
@@ -917,7 +943,15 @@ impl AgentManager {
                     ) {
                         return;
                     }
-                    let can_reconnect = agent.info.session_id.is_some();
+                    agent.reconnect_burst = next_reconnect_burst(
+                        agent.last_activate,
+                        Instant::now(),
+                        agent.reconnect_burst,
+                    );
+                    let can_reconnect = can_reconnect_after_burst(
+                        agent.info.session_id.is_some(),
+                        agent.reconnect_burst,
+                    );
                     agent.info.status = if can_reconnect {
                         ManagedStatus::Starting
                     } else {
@@ -928,12 +962,19 @@ impl AgentManager {
                     agent.info.pending_permission_count = 0;
                     agent.info.last_error = Some(if can_reconnect {
                         format!("ACP {failure}; reconnecting after transport loss: {reason}")
+                    } else if agent.reconnect_burst >= 3 {
+                        format!("ACP {failure}: {reason} (gave up after repeated reconnects)")
                     } else {
                         format!("ACP {failure}: {reason}")
                     });
-                    (Some(agent.info.clone()), can_reconnect)
+                    let kill_on_give_up = if can_reconnect {
+                        None
+                    } else {
+                        Some(Arc::clone(&agent.client))
+                    };
+                    (Some(agent.info.clone()), can_reconnect, kill_on_give_up)
                 }
-                None => (None, false),
+                None => (None, false, None),
             }
         };
         if let Some(info) = updated {
@@ -941,6 +982,10 @@ impl AgentManager {
         }
         if should_reconnect {
             Self::spawn_reconnect(Arc::clone(inner), handle_id.to_string(), generation);
+        } else if let Some(client) = kill_client {
+            // Giving up without a kill leaves grok in active_sessions.json,
+            // which the UI then labels "Open in Grok Build".
+            let _ = client.kill();
         }
     }
 
@@ -1043,6 +1088,8 @@ impl AgentManager {
                 agent_args: agent_args.to_vec(),
                 in_flight_prompts: HashSet::new(),
                 current_prompt_id: None,
+                last_activate: None,
+                reconnect_burst: 0,
             },
         );
         Self::drain_early_requests(&self.inner, &handle_id);
@@ -1263,6 +1310,9 @@ impl AgentManager {
         };
 
         info.session_id = Some(session_id.clone());
+        if let Some(a) = self.inner.agents.lock().get_mut(&handle_id) {
+            a.last_activate = Some(Instant::now());
+        }
         task_prefs::set_permission_mode(&session_id, permission_mode)?;
         if let Some(models) = result.models.as_ref() {
             models::apply_models_info(&mut info, models);
@@ -1302,31 +1352,42 @@ impl AgentManager {
         Ok(info)
     }
 
-    pub fn attach(&self, req: AttachRequest) -> Result<ManagedAgentInfo, String> {
+    pub fn attach(&self, req: AttachRequest) -> Result<ManagedAgentInfo, sessions::CommandError> {
         let cwd = req.cwd.trim().to_string();
         let session_id = req.session_id.trim().to_string();
         if session_id.is_empty() {
             return Err("session_id required".into());
         }
         if cwd.is_empty() || !Path::new(&cwd).is_dir() {
-            return Err(format!("Invalid working directory: {cwd}"));
+            return Err(format!("Invalid working directory: {cwd}").into());
         }
 
-        {
+        let existing = {
             let agents = self.inner.agents.lock();
-            if let Some(existing) = agents.values().find(|a| {
-                a.info.session_id.as_deref() == Some(session_id.as_str())
-                    && !matches!(a.info.status, ManagedStatus::Stopped | ManagedStatus::Error)
-            }) {
-                return Ok(existing.info.clone());
+            agents
+                .values()
+                .find(|a| {
+                    a.info.session_id.as_deref() == Some(session_id.as_str())
+                        && !matches!(a.info.status, ManagedStatus::Stopped | ManagedStatus::Error)
+                })
+                .map(|a| (a.info.clone(), a.info.pid))
+        };
+        if let Some((info, pid)) = existing {
+            if let Some(msg) = sessions::session_open_elsewhere_error(&session_id, pid) {
+                return Err(msg);
             }
+            return Ok(info);
+        }
+        if let Some(msg) = sessions::session_open_elsewhere_error(&session_id, None) {
+            return Err(msg);
         }
         {
             let mut attaching = self.inner.attaching_sessions.lock();
             if !attaching.insert(session_id.clone()) {
-                return Err(format!("session {session_id} is already attaching"));
+                return Err(format!("session {session_id} is already attaching").into());
             }
         }
+
         let _reservation = AttachReservation {
             inner: Arc::clone(&self.inner),
             session_id: session_id.clone(),
@@ -1374,7 +1435,8 @@ impl AgentManager {
                     &handle_id,
                     &mut info,
                     e.user_message(),
-                ));
+                )
+                .into());
             }
         };
 
@@ -1384,6 +1446,7 @@ impl AgentManager {
         info.status = ManagedStatus::Ready;
         if let Some(a) = self.inner.agents.lock().get_mut(&handle_id) {
             a.info = info.clone();
+            a.last_activate = Some(Instant::now());
         }
         Self::emit_status(&self.inner, &info);
 
@@ -1659,9 +1722,38 @@ impl AgentManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{finish_prompt, finish_prompt_status, terminal_prompt_id, ManagedStatus};
+    use super::{
+        can_reconnect_after_burst, finish_prompt, finish_prompt_status, next_reconnect_burst,
+        terminal_prompt_id, ManagedStatus,
+    };
     use serde_json::json;
     use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn reconnect_burst_increments_when_last_activate_is_recent() {
+        let now = Instant::now();
+        let last = Some(now.checked_sub(Duration::from_millis(100)).unwrap());
+        assert_eq!(next_reconnect_burst(last, now, 0), 1);
+        assert_eq!(next_reconnect_burst(last, now, 1), 2);
+        assert_eq!(next_reconnect_burst(last, now, 2), 3);
+    }
+
+    #[test]
+    fn reconnect_burst_resets_when_last_activate_is_stale() {
+        let now = Instant::now();
+        let last = Some(now.checked_sub(Duration::from_secs(6)).unwrap());
+        assert_eq!(next_reconnect_burst(last, now, 2), 0);
+        assert_eq!(next_reconnect_burst(None, now, 2), 0);
+    }
+
+    #[test]
+    fn reconnect_gives_up_after_three_unstable_deaths() {
+        assert!(can_reconnect_after_burst(true, 0));
+        assert!(can_reconnect_after_burst(true, 2));
+        assert!(!can_reconnect_after_burst(true, 3));
+        assert!(!can_reconnect_after_burst(false, 0));
+    }
 
     #[test]
     fn queued_prompt_completion_does_not_replace_current_turn() {

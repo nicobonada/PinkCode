@@ -110,6 +110,93 @@ pub fn read_active_sessions() -> Result<Vec<ActiveSession>> {
         .collect())
 }
 
+/// Live pid holding `session_id` in `active_sessions.json`, if it is not `ignore_pid`.
+pub fn foreign_active_pid(session_id: &str, ignore_pid: Option<u32>) -> Option<u32> {
+    read_active_sessions().ok()?.into_iter().find_map(|s| {
+        if s.session_id == session_id && ignore_pid != Some(s.pid) {
+            Some(s.pid)
+        } else {
+            None
+        }
+    })
+}
+
+/// IPC reject payload. Serialized as `{ code, message, pid? }` so the
+/// frontend can match a stable code instead of grepping the message.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+}
+
+impl CommandError {
+    pub const SESSION_OPEN_ELSEWHERE: &'static str = "session_open_elsewhere";
+
+    pub fn other(message: impl Into<String>) -> Self {
+        Self {
+            code: "error".into(),
+            message: message.into(),
+            pid: None,
+        }
+    }
+
+    pub fn session_open_elsewhere(pid: u32) -> Self {
+        Self {
+            code: Self::SESSION_OPEN_ELSEWHERE.into(),
+            pid: Some(pid),
+            message: format!(
+                "session is already open in another Grok process (pid {pid}); close that process or pick a different task"
+            ),
+        }
+    }
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for CommandError {}
+
+impl From<String> for CommandError {
+    fn from(message: String) -> Self {
+        Self::other(message)
+    }
+}
+
+impl From<&str> for CommandError {
+    fn from(message: &str) -> Self {
+        Self::other(message)
+    }
+}
+
+pub fn session_open_elsewhere_error(
+    session_id: &str,
+    ignore_pid: Option<u32>,
+) -> Option<CommandError> {
+    foreign_active_pid(session_id, ignore_pid).map(CommandError::session_open_elsewhere)
+}
+
+/// Poll until `pid` is gone or `timeout` elapses. Used after killing an ACP
+/// child so `active_sessions.json` does not still list it as a foreign owner.
+pub fn wait_until_dead(pid: u32, timeout: Duration) -> bool {
+    if pid == 0 || !process_is_alive(pid) {
+        return true;
+    }
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        std::thread::sleep(Duration::from_millis(50));
+        if !process_is_alive(pid) {
+            return true;
+        }
+    }
+    !process_is_alive(pid)
+}
+
 /// Best-effort check that `pid` still refers to a live process.
 fn process_is_alive(pid: u32) -> bool {
     if pid == 0 {
@@ -1251,6 +1338,22 @@ fn extract_update_unix_secs(msg: &Value) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wait_until_dead_treats_pid_zero_as_gone() {
+        assert!(wait_until_dead(0, Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn exclusive_session_error_uses_stable_code() {
+        let err = CommandError::session_open_elsewhere(4321);
+        assert_eq!(err.code, CommandError::SESSION_OPEN_ELSEWHERE);
+        assert_eq!(err.pid, Some(4321));
+        let json = serde_json::to_value(&err).expect("serialize");
+        assert_eq!(json["code"], "session_open_elsewhere");
+        assert_eq!(json["pid"], 4321);
+        assert!(json["message"].as_str().unwrap().contains("4321"));
+    }
 
     #[test]
     fn token_usage_series_returns_window() {

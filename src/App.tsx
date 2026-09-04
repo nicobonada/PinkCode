@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   attachAgent,
+  formatInvokeError,
+  isExclusiveSessionError,
   getLastSpawnPermissionMode,
+  getSessionCard,
   getSessionDetail,
   interjectAgent,
   listManagedAgents,
@@ -19,6 +22,7 @@ import {
   stopAgent,
 } from "./api";
 import { MacosTitlebarBrand } from "./components/MacosTitlebarBrand";
+import type { SendResult } from "./components/PromptBar";
 import { NewTaskModal } from "./components/NewTaskModal";
 import { SessionDetailView } from "./components/SessionDetail";
 import { SessionList } from "./components/SessionList";
@@ -48,7 +52,12 @@ import {
   isLocalSlashCommand,
   runLocalSlash,
 } from "./utils/localSlash";
-import { isLiveManagedStatus } from "./utils/managedStatus";
+import {
+  isAttachedManagedStatus,
+  isLiveManagedStatus,
+} from "./utils/managedStatus";
+import { SEND_REFUSAL_HINT } from "./utils/turnActivity";
+import { pickSelectedId } from "./utils/pickSelectedId";
 import type { UserQuestionResolvePayload } from "./utils/permissionPayload";
 import { joinUnderRoot } from "./utils/paths";
 import {
@@ -69,24 +78,10 @@ const FS_REFRESH_MIN_MS = 400;
 /** Slow safety net if FSEvents miss a write (rare). */
 const SAFETY_POLL_MS = 90_000;
 
-/** Single selection policy for staged list → managed load. */
-function pickSelectedId(
-  list: SessionCard[],
-  prev: string | null,
-  managed?: ManagedAgentInfo[],
-): string | null {
-  if (prev && list.some((s) => s.id === prev)) return prev;
-  if (managed?.length) {
-    const managedSid = managed.find((m) => m.sessionId)?.sessionId;
-    if (managedSid && list.some((s) => s.id === managedSid)) {
-      return managedSid;
-    }
-  }
-  const live = list.find((s) => s.isActive);
-  return live?.id ?? list[0]?.id ?? null;
-}
 function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [tab, setTab] = useState<MainTab>("timeline");
   const [detailLoading, setDetailLoading] = useState(false);
@@ -145,13 +140,25 @@ function App() {
   });
   const onRecentSessionsLoaded = useCallback(
     async (list: SessionCard[]) => {
-      setSelectedId((previous) => pickSelectedId(list, previous));
+      const previous = selectedIdRef.current;
+      let prevOnDisk: boolean | undefined;
+      if (previous && !list.some((s) => s.id === previous)) {
+        try {
+          await getSessionCard(previous);
+          prevOnDisk = true;
+        } catch {
+          prevOnDisk = false;
+        }
+      }
+      setSelectedId((prev) => pickSelectedId(list, prev, { prevOnDisk }));
       try {
         const managed = await listManagedAgents();
         for (const item of managed) {
           upsertManaged(item);
         }
-        setSelectedId((previous) => pickSelectedId(list, previous, managed));
+        setSelectedId((prev) =>
+          pickSelectedId(list, prev, { prevOnDisk, managed }),
+        );
       } catch {
         /* managed agents are optional during startup */
       }
@@ -173,9 +180,12 @@ function App() {
     onError: setError,
   });
   // ACP owns the live tail when attached; disk-only sessions re-hydrate on poll.
+  // Include `starting` so reconnect does not replace the open pane with page 1.
   const liveOwnsTail =
     managedForSession != null &&
-    isLiveManagedStatus(managedForSession.status);
+    isAttachedManagedStatus(managedForSession.status);
+  const liveOwnsTailRef = useRef(liveOwnsTail);
+  liveOwnsTailRef.current = liveOwnsTail;
   const timelineHistory = useTimelineHistory(
     selectedId,
     detail,
@@ -255,8 +265,6 @@ function App() {
     [planArmedSelected, effectivePermissionMode],
   );
 
-  const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
   const detailReqSeq = useRef(0);
   const lastFsRefreshRef = useRef(0);
   /** Session id we intentionally focused (spawn); ignore auto-steal otherwise. */
@@ -295,7 +303,9 @@ function App() {
     lastFsRefreshRef.current = now;
     void refreshList();
     const id = selectedIdRef.current;
-    if (id) void refreshDetail(id, true);
+    // ACP owns the tail (starting included). Disk-only panes still need
+    // silent getSessionDetail so updates.jsonl refreshes the open timeline.
+    if (id && !liveOwnsTailRef.current) void refreshDetail(id, true);
     setGitRefreshKey((n) => n + 1);
   }, [refreshList, refreshDetail]);
 
@@ -312,11 +322,17 @@ function App() {
     () => setGitRefreshKey((n) => n + 1),
   );
 
+  const loadedDetailIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
+      loadedDetailIdRef.current = null;
       return;
     }
+    // Load once per selected task. refreshDetail identity must not replay
+    // getSessionDetail (first history page) into a live pane.
+    if (loadedDetailIdRef.current === selectedId) return;
+    loadedDetailIdRef.current = selectedId;
     void refreshDetail(selectedId);
   }, [selectedId, refreshDetail]);
 
@@ -346,6 +362,7 @@ function App() {
       }
       if (
         selected &&
+        !liveOwnsTailRef.current &&
         (!payload.sessionId || payload.sessionId === selected)
       ) {
         void refreshDetail(selected, true);
@@ -358,7 +375,7 @@ function App() {
       cancelled = true;
       unlisten?.();
     };
-  }, [refreshList, refreshDetail, refreshCard]);
+  }, [refreshList, refreshCard, refreshDetail]);
 
   // These are advertised ACP capabilities, so consume their notifications
   // and invalidate the workspace immediately.
@@ -382,7 +399,9 @@ function App() {
         return;
       }
       setGitRefreshKey((n) => n + 1);
-      if (selected) void refreshDetail(selected, true);
+      if (selected && !liveOwnsTailRef.current) {
+        void refreshDetail(selected, true);
+      }
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;
@@ -405,10 +424,10 @@ function App() {
       }, 300);
     };
     document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("focus", onVis);
+    // WebKitGTK/Wayland fires window focus on every click; that used to
+    // refreshFromDisk → roster reload → selection bounce → page-1 remount.
     return () => {
       document.removeEventListener("visibilitychange", onVis);
-      window.removeEventListener("focus", onVis);
       if (t != null) window.clearTimeout(t);
     };
   }, [refreshFromDisk]);
@@ -503,10 +522,7 @@ function App() {
     sessionId: string,
   ): Promise<ManagedAgentInfo | null> {
     const existing = managedList.find(
-      (m) =>
-        m.sessionId === sessionId &&
-        m.status !== "stopped" &&
-        m.status !== "error",
+      (m) => m.sessionId === sessionId && isAttachedManagedStatus(m.status),
     );
     if (existing) return existing;
 
@@ -516,11 +532,19 @@ function App() {
     setSelectedId(sessionId);
     // Backend restores this task's saved mode when permissionMode is omitted.
     const saved = taskPermissionModes[sessionId];
-    const info = await attachAgent({
-      sessionId: card.id,
-      cwd: card.cwd,
-      permissionMode: saved ?? null,
-    });
+    let info: ManagedAgentInfo;
+    try {
+      info = await attachAgent({
+        sessionId: card.id,
+        cwd: card.cwd,
+        permissionMode: saved ?? null,
+      });
+    } catch (e) {
+      // Another Grok process owns the session. Open in Grok Build chrome
+      // is the signal; do not paint the error banner.
+      if (isExclusiveSessionError(e)) return null;
+      throw e;
+    }
     upsertManaged(info);
     if (info.sessionId) {
       setTaskPermissionModes((prev) => ({
@@ -669,9 +693,9 @@ function App() {
     }
   }
 
-  async function handleSend(text: string) {
+  async function handleSend(text: string): Promise<SendResult> {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) return { accepted: false };
     setControlBusy(true);
     setError(null);
     setTab("timeline");
@@ -701,7 +725,7 @@ function App() {
           if (result.refreshWeekUsage) {
             void refreshWeekUsage({ force: true });
           }
-          return;
+          return { accepted: true };
         }
       }
 
@@ -710,31 +734,33 @@ function App() {
       let liveAgent = managedForSession;
       let handleId = liveAgent?.handleId;
       let sessionIdForPlan = liveAgent?.sessionId ?? selectedId;
-      if (
-        !handleId ||
-        liveAgent?.status === "stopped" ||
-        liveAgent?.status === "error"
-      ) {
+      if (!handleId || !isLiveManagedStatus(liveAgent?.status)) {
         const sessionId = selectedId ?? sessions[0]?.id ?? null;
         if (!sessionId) {
           setError("Select a task first, or create one with New.");
-          return;
+          return { accepted: false };
         }
         const info = await ensureAttached(sessionId);
         if (!info) {
-          setError("Could not connect to this task.");
-          return;
+          // Banner stays off; composer keeps the draft and shows the card cue.
+          return { accepted: false, hint: SEND_REFUSAL_HINT.openElsewhere };
         }
         liveAgent = info;
         handleId = info.handleId;
         sessionIdForPlan = info.sessionId ?? sessionId;
       }
 
+      // Reconnect / first attach still Starting. Do not prompt (agent not
+      // ready) and do not attach again with ignore_pid = None.
+      if (!isLiveManagedStatus(liveAgent?.status)) {
+        return { accepted: false, hint: SEND_REFUSAL_HINT.connecting };
+      }
+
       if (liveAgent) {
         try {
           liveAgent = await applySessionModel(liveAgent);
         } catch (e) {
-          setError(e instanceof Error ? e.message : String(e));
+          setError(formatInvokeError(e));
         }
       }
 
@@ -762,8 +788,13 @@ function App() {
         });
       }
       setPinTimelineBottomSeq((n) => n + 1);
+      return { accepted: true };
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isExclusiveSessionError(e)) {
+        return { accepted: false, hint: SEND_REFUSAL_HINT.openElsewhere };
+      }
+      setError(formatInvokeError(e));
+      return { accepted: false };
     } finally {
       setControlBusy(false);
     }
@@ -1002,7 +1033,7 @@ function App() {
           controlBusy={controlBusy}
           sessionMode={effectiveSessionMode}
           onSessionModeChange={(m) => void handleSessionModeChange(m)}
-          onSendPrompt={(t) => void handleSend(t)}
+          onSendPrompt={handleSend}
           promptQueue={promptQueue}
           onResolvePermission={(item, opt, comments, payload) =>
             void handleResolvePermission(item, opt, comments, payload)

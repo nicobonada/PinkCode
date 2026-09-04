@@ -46,8 +46,8 @@ export type TurnActivityKind =
 
 export type TurnActivitySource = "managed" | "external";
 
-/** Indicator motion: busy spin, calm pulse, or snappy cancel. */
-export type TurnIndicatorMode = "spin" | "wait" | "danger";
+/** Indicator motion: busy spin, calm pulse, snappy cancel, or static. */
+export type TurnIndicatorMode = "spin" | "wait" | "danger" | "still";
 
 export interface ResolvedTurnActivity {
   kind: TurnActivityKind;
@@ -151,6 +151,28 @@ function activity(
     showPhaseTimer: partial.showPhaseTimer ?? true,
     showTurnTimer: partial.showTurnTimer ?? true,
   };
+}
+
+/** Muted reason under red `Not sent`. Same shape as Disconnected + lastError. */
+export const SEND_REFUSAL_HINT = {
+  openElsewhere: "Already open in Grok Build",
+  connecting: "Still connecting",
+} as const;
+
+/** Composer refused a send. Same chrome as ACP Disconnected (red, on the box). */
+export function sendRefusalActivity(hint?: string | null): ResolvedTurnActivity {
+  const trimmed = hint?.trim();
+  return activity({
+    kind: "waiting",
+    label: "Not sent",
+    tone: "danger",
+    indicator: "still",
+    phaseKey: "send-refusal",
+    source: "managed",
+    hint: trimmed || undefined,
+    showPhaseTimer: false,
+    showTurnTimer: false,
+  });
 }
 
 function waiting(
@@ -395,6 +417,23 @@ export function resolveTurnActivity(
 
   // PinkCode already attached but idle — no status row.
   if (isManagedConnected(managed)) return null;
+
+  // Our attach died. Do not relabel the leftover grok pid as Grok Build.
+  if (managed?.status === "error") {
+    return activity({
+      kind: "waiting",
+      label: "Disconnected",
+      tone: "danger",
+      indicator: "danger",
+      phaseKey: "error",
+      source: "managed",
+      hint: managed.lastError?.trim()
+        ? managed.lastError
+        : "Agent lost ACP. Stop, then send to reconnect.",
+      showPhaseTimer: false,
+      showTurnTimer: false,
+    });
+  }
 
   // External host has the session process open (typical: Grok Build TUI).
   if (opts?.sessionIsActive) {

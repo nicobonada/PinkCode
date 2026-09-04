@@ -1,4 +1,5 @@
 import type { ManagedStatus } from "../types";
+import { isAttachedManagedStatus } from "./managedStatus";
 
 /**
  * Visual run-state for a task card / list chrome.
@@ -18,7 +19,7 @@ export type CardState =
 
 /** Non-terminal PinkCode attach (includes starting / ready / running / …). */
 export function isPinkcodeAttached(st?: ManagedStatus | null): boolean {
-  return Boolean(st && st !== "stopped" && st !== "error");
+  return isAttachedManagedStatus(st);
 }
 
 const MANAGED_ACTIVE = new Set<ManagedStatus>([
@@ -49,6 +50,7 @@ export function resolveCardState(
   if (st === "starting") return "starting";
   if (st === "awaitingPermission") return "awaiting";
   if (isPinkcodeAttached(st)) return "live";
+  if (st === "error") return "idle";
   if (openElsewhere) return "open";
   return "idle";
 }

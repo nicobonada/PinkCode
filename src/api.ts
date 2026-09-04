@@ -118,6 +118,40 @@ export async function attachAgent(request: AttachRequest): Promise<ManagedAgentI
   return invoke<ManagedAgentInfo>("attach_agent", { request });
 }
 
+/** Tauri `invoke` rejects with a string, Error, or `{ message }`. */
+export function formatInvokeError(error: unknown): string {
+  if (typeof error === "string" && error.trim()) return error;
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (error && typeof error === "object") {
+    const rec = error as { message?: unknown; error?: unknown };
+    if (typeof rec.message === "string" && rec.message.trim()) {
+      return rec.message;
+    }
+    if (typeof rec.error === "string" && rec.error.trim()) {
+      return rec.error;
+    }
+  }
+  return String(error);
+}
+
+const EXCLUSIVE_SESSION_CODE = "session_open_elsewhere";
+
+function invokeErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const rec = error as { code?: unknown; error?: unknown };
+  if (typeof rec.code === "string" && rec.code.trim()) return rec.code;
+  if (rec.error && typeof rec.error === "object") {
+    const inner = rec.error as { code?: unknown };
+    if (typeof inner.code === "string" && inner.code.trim()) return inner.code;
+  }
+  return undefined;
+}
+
+/** Attach refused because another Grok pid owns the session. */
+export function isExclusiveSessionError(error: unknown): boolean {
+  return invokeErrorCode(error) === EXCLUSIVE_SESSION_CODE;
+}
+
 export async function promptAgent(
   handleId: string,
   text: string,
