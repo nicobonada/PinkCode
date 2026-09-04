@@ -26,7 +26,7 @@
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "pinkcode";
-  version = "1.2.1";
+  version = "1.2.2";
 
   src = lib.cleanSourceWith {
     src = ./.;
@@ -40,11 +40,11 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   npmDeps = fetchNpmDeps {
     inherit (finalAttrs) src;
-    hash = "sha256-lbP4E6PqQhlAl2SHOHU9O5eSt49WQfw7ajTX4N9QG1E=";
+    hash = "sha256-mOaA/9GPaI/yiK/PhzqyWyyzEu9hNbnI7agpJCqQiPU=";
     fetcherVersion = 2;
   };
 
-  cargoHash = "sha256-5xWwk2rE3fEOwGnQ9wS2KOWZl3GLiLhqXT5FatV4pEA=";
+  cargoHash = "sha256-rJBpYSOHDUOkx0gyoo7RO6vhPhx81o66AKJciMlAuPU=";
 
   cargoRoot = "src-tauri";
   buildAndTestSubdir = "src-tauri";
